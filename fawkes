@@ -1,0 +1,17 @@
+#!/usr/bin/env python3
+
+import os
+from mutate import Mutator
+
+if __name__ == '__main__':
+    # TODO: Move this stuff to cmdline args
+    _BUILD_CMD = 'gcc -o mutate_test example.c test.c'
+    _CLEAN_CMD = 'rm -f mutate_test *.o'
+    _MUTATE_SRC = 'example.c' 
+    _TEST_EXE = 'mutate_test'
+    mut = Mutator(_BUILD_CMD, _TEST_EXE, _MUTATE_SRC)
+    mut()
+
+    # Clean up
+    os.system(_CLEAN_CMD)
+    

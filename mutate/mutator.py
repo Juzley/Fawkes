@@ -8,7 +8,6 @@ from pycparser import c_generator
 from pycparser.c_ast import BinaryOp
 
 
-_ENV_PRELOAD_PREFIX = 'LD_PRELOAD=$PWD/inject.so'
 _ENV_ORIG_SRC = 'MUTATE_ORIG_SRC'
 _ENV_MODIFIED_SRC = 'MUTATE_MODIFIED_SRC'
 
@@ -18,11 +17,13 @@ def node_to_str (node):
     return gen.visit(node)
 
 class Mutator:
-    def __init__(self, build_cmd, test_exe, mutate_file):
+    def __init__(self, build_cmd, test_exe, mutate_file,
+                 inject_path='$PWD/inject/inject.so'):
         self._build_cmd = build_cmd
         self._test_exe = test_exe
         self._orig_filename= mutate_file
         self._ast = pycparser.parse_file(self._orig_filename)
+        self._inject_path = inject_path
         self._iteration = 0
         self.caught = 0
         self.missed = 0
@@ -80,11 +81,14 @@ class Mutator:
         # TODO: Use subprocess rather than this
         # TODO: Timeout - mutation could lead to infinite loop
         # Build the test
-        os.system('{} {}="{}" {}="{}" {}'.format(
-            _ENV_PRELOAD_PREFIX,
+        os.system('LD_PRELOAD={} {}="{}" {}="{}" {}'.format(
+            self._inject_path,
             _ENV_ORIG_SRC, self._orig_filename,
             _ENV_MODIFIED_SRC, mutated_filename,
             self._build_cmd))
+
+        # Remove the mutated C file
+        os.system('rm {}'.format(mutated_filename))
 
         # Run the test
         ret = os.system('./' + self._test_exe)
@@ -104,16 +108,3 @@ class Mutator:
             result_str)) 
 
         self._iteration += 1
-
-
-if __name__ == '__main__':
-    # TODO: Move this stuff to cmdline args
-    _BUILD_CMD = 'gcc -o test example.c test.c'
-    _MUTATE_SRC = 'example.c' 
-    _TEST_EXE = 'test'
-    mut = Mutator(_BUILD_CMD, _TEST_EXE, _MUTATE_SRC)
-    mut()
-
-    # Tidy up by executing a unmodified build
-    os.system(_BUILD_CMD)
-
