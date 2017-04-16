@@ -17,11 +17,10 @@ def node_to_str (node):
     return gen.visit(node)
 
 class Mutator:
-    def __init__(self, build_cmd, test_exe, mutate_file,
-                 inject_path='$PWD/inject/inject.so'):
+    def __init__(self, build_cmd, test_exe, mutate_file, inject_path):
         self._build_cmd = build_cmd
         self._test_exe = test_exe
-        self._orig_filename= mutate_file
+        self._orig_filename = mutate_file
         self._ast = pycparser.parse_file(self._orig_filename)
         self._inject_path = inject_path
         self._iteration = 0
