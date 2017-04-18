@@ -32,19 +32,37 @@ class Mutator:
         return self.caught + self.missed
 
     def __call__(self):
-        self._visit(self._ast)
+        self._visit(self._ast, None)
 
-    def _visit(self, node):
+    def _visit(self, node, parent):
         method = getattr(self, 
                          '_visit_' + node.__class__.__name__,
                          self._generic_visit)
-        method(node)
+        method(node, parent)
 
-    def _generic_visit(self, node):
+        # Visit the children. Note that this provides individual node visit
+        # functions with no control over whether the children are visited or
+        # not, this is assumed to be OK for now but could move this into
+        # each node visit function if required.
         for _, c in node.children():
-            self._visit(c)
+            self._visit(c, node)
 
-    def _visit_BinaryOp(self, node):
+    def _generic_visit(self, node, parent):
+        pass
+
+    def _visit_UnaryOp(self, node, parent):
+        old_node_str = node_to_str(node)
+        old_op = node.op
+
+        if node.op == 'p++':
+            node.op = 'p--'
+        else n.op == 'p--':
+            node.op = 'p++'
+
+        self._test(node, old_node_str)
+        node.op = old_op
+
+    def _visit_BinaryOp(self, node, parent):
         old_node_str = node_to_str(node)
         old_op = node.op
 
@@ -63,9 +81,6 @@ class Mutator:
             self._test(node, old_node_str)
 
         node.op = old_op
-
-        self._visit(node.left)
-        self._visit(node.right)
 
     def _test(self, node, old_node_str):
         # Write the modified AST out to a file
@@ -94,11 +109,13 @@ class Mutator:
         if ret == 0:
             self.missed += 1
             result_str = 'missed'
+            log_fn = logging.error
         else:
             self.caught += 1
             result_str = 'caught'
+            log_fn = logging.info
 
-        print('Run {}: {} "{}" -> "{}", test output {} - {}'.format(
+        log_fn('Run {}: {} "{}" -> "{}", test output {} - {}'.format(
             self._iteration,
             node.coord,
             old_node_str,
