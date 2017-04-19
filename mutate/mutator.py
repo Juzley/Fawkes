@@ -5,7 +5,7 @@ import tempfile
 import logging
 
 from pycparser import c_generator
-from pycparser.c_ast import BinaryOp
+from pycparser.c_ast import Break
 
 
 _ENV_ORIG_SRC = 'MUTATE_ORIG_SRC'
@@ -50,16 +50,28 @@ class Mutator:
     def _generic_visit(self, node, parent):
         pass
 
+    def _visit_Case(self, node, parent):
+        # Find if there is a break, and remove it. Note that
+        # in the case where there are multiple breaks, we will
+        # remove them all.
+        old_stmts = node.stmts
+        node.stmts = [s for s in node.stmts if not isinstance(s, Break)]
+
+        self._test(node, 'remove breaks from "case {}"'.format(
+            node_to_str(node.expr)))
+        node.stmts = old_stmts
+
     def _visit_UnaryOp(self, node, parent):
         old_node_str = node_to_str(node)
         old_op = node.op
 
         if node.op == 'p++':
             node.op = 'p--'
-        else n.op == 'p--':
+        elif node.op == 'p--':
             node.op = 'p++'
 
-        self._test(node, old_node_str)
+        self._test(node, '"{}" -> "{}"'.format(old_node_str,
+                                               node_to_str(node)))
         node.op = old_op
 
     def _visit_BinaryOp(self, node, parent):
@@ -78,11 +90,12 @@ class Mutator:
 
         for op in ops:
             node.op = op
-            self._test(node, old_node_str)
+            self._test(node, '"{}" -> "{}"'.format(old_node_str,
+                                               node_to_str(node)))
 
         node.op = old_op
 
-    def _test(self, node, old_node_str):
+    def _test(self, node, mutation_str):
         # Write the modified AST out to a file
         ext = os.path.splitext(self._orig_filename)[1]
         
@@ -115,11 +128,10 @@ class Mutator:
             result_str = 'caught'
             log_fn = logging.info
 
-        log_fn('Run {}: {} "{}" -> "{}", test output {} - {}'.format(
+        log_fn('Run {}: {} {}, test output {} - {}'.format(
             self._iteration,
             node.coord,
-            old_node_str,
-            node_to_str(node),
+            mutation_str,
             ret,
             result_str)) 
 

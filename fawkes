@@ -54,8 +54,6 @@ if __name__ == '__main__':
     logging.getLogger('').addHandler(logfile)
 
     # Find the inject lib, build it if it doesn't exist
-    print(__file__)
-    print(os.path.realpath(__file__))
     fawkes_dir = os.path.dirname(os.path.realpath(__file__))
     inject_dir = fawkes_dir + '/' + _INJECT_DIR
     if not os.path.exists(inject_dir):
