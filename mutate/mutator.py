@@ -62,16 +62,21 @@ class Mutator:
         node.stmts = old_stmts
 
     def _visit_UnaryOp(self, node, parent):
+        test = False
+
         old_node_str = node_to_str(node)
         old_op = node.op
 
         if node.op == 'p++':
             node.op = 'p--'
+            test = True
         elif node.op == 'p--':
             node.op = 'p++'
+            test = True
 
-        self._test(node, '"{}" -> "{}"'.format(old_node_str,
-                                               node_to_str(node)))
+        if test:
+            self._test(node, '"{}" -> "{}"'.format(old_node_str,
+                                                   node_to_str(node)))
         node.op = old_op
 
     def _visit_BinaryOp(self, node, parent):
@@ -83,7 +88,16 @@ class Mutator:
         # operators in that group if the op we are looking at is in
         # the group.
         ops = set()
-        op_swaps = [{'+', '-'}, {'<', '>', '<=', '>='}, {'!=', '=='}]
+        op_swaps = [{'+', '-'},
+                    {'<', '>', '<=', '>='},
+                    {'<<', '>>'},
+                    {'!=', '=='},
+                    {'&', '&&'},
+                    {'&', '|'},
+                    {'&&', '||'},
+                    {'<<', '>>'},
+                    {'|=', '&='}]
+
         for swap in op_swaps:
             if node.op in swap:
                 ops |= swap - set(node.op)
@@ -91,7 +105,7 @@ class Mutator:
         for op in ops:
             node.op = op
             self._test(node, '"{}" -> "{}"'.format(old_node_str,
-                                               node_to_str(node)))
+                                                   node_to_str(node)))
 
         node.op = old_op
 
