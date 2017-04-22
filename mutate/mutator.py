@@ -6,6 +6,7 @@ import logging
 import copy
 import subprocess
 import shlex
+import time
 from threading import Timer
 from pycparser import c_generator
 from pycparser.c_ast import Break
@@ -92,6 +93,9 @@ class MutationGenerator(c_generator.CGenerator):
 
 
 class Mutator:
+    _MIN_RUN_TIME = 5
+    _TIMEOUT_MULTIPLIER = 4
+
     def __init__(self, build_cmd, test_exe, mutate_file, inject_path, log_dir):
         self._build_cmd = build_cmd
         self._test_exe = test_exe
@@ -100,17 +104,22 @@ class Mutator:
         self._inject_path = inject_path
         self._iteration = 0
         self._log_dir = log_dir
+        self._run_timeout = 0
         self.build_failed = 0
         self.crashed = 0
+        self.timed_out = 0
         self.caught = 0
         self.missed = 0
+        self._gen_orig_filename = '{}/{}.orig'.format(self._log_dir,
+                                                      self._orig_filename)
 
     @property
     def runs (self):
         return self.caught + self.missed + self.build_failed + self.crashed
 
     def __call__(self):
-        self._visit(self._ast, None)
+        if self._initial_run():
+            self._visit(self._ast, None)
 
     def _visit(self, node, parent):
         method = getattr(self, 
@@ -189,11 +198,41 @@ class Mutator:
 
     def _write_diff(self, mutation_filename):
         # TODO: Check if the diff executable exists etc?
-        os.system('diff {} {} > {}/{}.diff'.format(
-            self._orig_filename,
+        os.system('diff -c {} {} > {}/{}.diff'.format(
+            self._gen_orig_filename,
             mutation_filename,
             self._iter_log_dirname(),
             self._orig_filename))
+
+    def _run_mutation(self, mutation_str, coord):
+        # TODO: Build the exe path correctly
+        # TODO: Check for crashes
+        try:
+            run_log = '{}/{}.log'.format(self._iter_log_dirname(),
+                                         self._test_exe)
+            rc = _run_process(cmd='./' + self._test_exe,
+                              log_filename=run_log,
+                              timeout_sec=self._run_timeout)
+        except TimeoutException:
+            self.timed_out += 1
+            result_str = 'timed out'
+            log_fn = logging.error
+        else:
+            if rc == 0:
+                self.missed += 1
+                result_str = 'missed'
+                log_fn = logging.error
+            else:
+                self.caught += 1
+                result_str = 'caught'
+                log_fn = logging.info
+
+        log_fn('Run {}: {} {}, test output {} - {}'.format(
+            self._iteration,
+            coord,
+            mutation_str,
+            rc,
+            result_str))
 
     def _test(self, swap_nodes, mutation_str=''):
         if mutation_str == '':
@@ -218,7 +257,6 @@ class Mutator:
         self._write_diff(mutation_filename)
         os.system('rm {}'.format(mutation_filename))
 
-
         if not build_success:
             self.build_failed += 1
             logging.error('Run {}: {} {} - build failed'.format(
@@ -226,24 +264,40 @@ class Mutator:
                 swap_nodes[0].coord,
                 mutation_str))
         else:
-            # TODO: Build the exe path correctly
-            # TODO: Timeout - mutation could lead to infinite loop.
-            # TODO: Check for crashes
-            rc = _run_process('./' + self._test_exe)
-            if rc == 0:
-                self.missed += 1
-                result_str = 'missed'
-                log_fn = logging.error
-            else:
-                self.caught += 1
-                result_str = 'caught'
-                log_fn = logging.info
-
-            log_fn('Run {}: {} {}, test output {} - {}'.format(
-                self._iteration,
-                swap_nodes[0].coord,
-                mutation_str,
-                rc,
-                result_str))
+            self._run_mutation(mutation_str, swap_nodes[0].coord)
 
         self._iteration += 1
+
+    def _initial_run(self):
+        # Dump the unmutated C file from the AST so that we can diff the
+        # mutations against it. If we just diffed against the file we parsed,
+        # the diffs would contain layout changes between the original file
+        # and the layout that the generator produces.
+        with open(self._gen_orig_filename, 'w') as f:
+            gen = c_generator.CGenerator()
+            f.write(gen.visit(self._ast))
+
+        build_log = self._log_dir + '/build.log.orig'
+        rc = _run_process(cmd=self._build_cmd, log_filename=build_log)
+
+        if rc == 0:
+            # Time the unmutated run so that we can time out mutated runs that
+            # have got stuck (e.g. a mutation leads to an infinite loop or
+            # deadlock).
+            start = time.time()
+
+            # TODO: Build the exe path correctly
+            run_log = self._log_dir + '/' + self._test_exe + '.log.orig'
+            rc = _run_process(cmd='./' + self._test_exe,
+                              log_filename=run_log)
+
+            end = time.time()
+
+            # Use a min run time - if a process runs very quickly we don't
+            # mind waiting a bit longer.
+            self._run_timeout = (Mutator._TIMEOUT_MULTIPLIER *
+                                 max(Mutator._MIN_RUN_TIME, int(end - start)))
+
+
+        return rc == 0
+
