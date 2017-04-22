@@ -69,7 +69,7 @@ if __name__ == '__main__':
             logging.error('Failed to build inject DLL')
             sys.exit(1)
 
-    mut = Mutator(_BUILD_CMD, _TEST_EXE, _MUTATE_SRC, inject_dll)
+    mut = Mutator(_BUILD_CMD, _TEST_EXE, _MUTATE_SRC, inject_dll, run_log_dir)
     mut()
 
     # Clean up

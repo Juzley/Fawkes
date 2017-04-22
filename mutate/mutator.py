@@ -4,7 +4,9 @@ import os
 import tempfile
 import logging
 import copy
-
+import subprocess
+import shlex
+from threading import Timer
 from pycparser import c_generator
 from pycparser.c_ast import Break
 
@@ -42,6 +44,38 @@ def _get_op_swaps(op, swaps):
     return ops
 
 
+def _run_process(cmd, env_vars=None, timeout_sec=0, log_filename=None):
+    def timeout(p):
+        p.kill()
+        raise TimeoutException()
+
+    env = os.environ.copy()
+    if env_vars is not None:
+        env.update(env_vars)
+
+    if log_filename is not None:
+        log_file = open(log_filename, 'w')
+        p = subprocess.Popen(shlex.split(cmd),
+                             env=env,
+                             stdout=log_file,
+                             stderr=log_file)
+    else:
+        p = subprocess.Popen(shlex.split(cmd), env=env)
+
+    timer = Timer(timeout_sec, timeout, [p])
+    try:
+        if timeout_sec > 0:
+            timer.start()
+        p.wait()
+    finally:
+        timer.cancel()
+
+        if log_filename is not None:
+            log_file.close()
+
+    return p.returncode
+
+
 class MutationGenerator(c_generator.CGenerator):
     def __init__(self, swap_nodes=None):
         self.swap_nodes = swap_nodes
@@ -58,19 +92,22 @@ class MutationGenerator(c_generator.CGenerator):
 
 
 class Mutator:
-    def __init__(self, build_cmd, test_exe, mutate_file, inject_path):
+    def __init__(self, build_cmd, test_exe, mutate_file, inject_path, log_dir):
         self._build_cmd = build_cmd
         self._test_exe = test_exe
         self._orig_filename = mutate_file
         self._ast = pycparser.parse_file(self._orig_filename)
         self._inject_path = inject_path
         self._iteration = 0
+        self._log_dir = log_dir
+        self.build_failed = 0
+        self.crashed = 0
         self.caught = 0
         self.missed = 0
 
     @property
     def runs (self):
-        return self.caught + self.missed
+        return self.caught + self.missed + self.build_failed + self.crashed
 
     def __call__(self):
         self._visit(self._ast, None)
@@ -126,40 +163,39 @@ class Mutator:
             new_node.op = op
             self._test((node, new_node))
 
-    def _test(self, swap_nodes, mutation_str=''):
-        # Write the modified AST out to a file
+    def _iter_log_dirname(self):
+        '''Return the log directory name for the current iteration.'''
+        return self._log_dir + '/{}'.format(self._iteration)
+
+    def _write_mutation(self, swap_nodes):
         ext = os.path.splitext(self._orig_filename)[1]
         with tempfile.NamedTemporaryFile(
                 mode='w', suffix=ext, delete=False) as f:
             gen = MutationGenerator(swap_nodes)
             f.write(gen.visit(self._ast))
-            mutated_filename = f.name
-            
-        # TODO: Use subprocess rather than this
-        # TODO: Check for build failures
-        # Build the test
-        os.system('LD_PRELOAD={} {}="{}" {}="{}" {}'.format(
-            self._inject_path,
-            _ENV_ORIG_SRC, self._orig_filename,
-            _ENV_MODIFIED_SRC, mutated_filename,
-            self._build_cmd))
+            return f.name
 
-        # Remove the mutated C file
-        os.system('rm {}'.format(mutated_filename))
+    def _build_mutation(self, mutation_filename):
+        '''Build the test executable, with the mutated file subbed in.'''
+        env_vars = {
+            'LD_PRELOAD': self._inject_path,
+            _ENV_ORIG_SRC: self._orig_filename,
+            _ENV_MODIFIED_SRC: mutation_filename
+        }
+        rc = _run_process(cmd=self._build_cmd,
+                          env_vars=env_vars,
+                          log_filename=self._iter_log_dirname() + '/build.log')
+        return rc == 0
 
-        # Run the test
-        # TODO: Timeout - mutation could lead to infinite loop
-        # TODO: Check for crashes.
-        ret = os.system('./' + self._test_exe)
-        if ret == 0:
-            self.missed += 1
-            result_str = 'missed'
-            log_fn = logging.error
-        else:
-            self.caught += 1
-            result_str = 'caught'
-            log_fn = logging.info
+    def _write_diff(self, mutation_filename):
+        # TODO: Check if the diff executable exists etc?
+        os.system('diff {} {} > {}/{}.diff'.format(
+            self._orig_filename,
+            mutation_filename,
+            self._iter_log_dirname(),
+            self._orig_filename))
 
+    def _test(self, swap_nodes, mutation_str=''):
         if mutation_str == '':
             if swap_nodes[1] is None:
                 mutation_str = 'Remove {}'.format(_node_to_str(swap_nodes[0]))
@@ -168,11 +204,46 @@ class Mutator:
                     _node_to_str(swap_nodes[0]),
                     _node_to_str(swap_nodes[1]))
 
-        log_fn('Run {}: {} {}, test output {} - {}'.format(
-            self._iteration,
-            swap_nodes[0].coord,
-            mutation_str,
-            ret,
-            result_str)) 
+        # Create the log directory for this iteration, the calls below will
+        # assume it exists.
+        os.mkdir(self._iter_log_dirname())
+
+        # Write the mutated AST to disk.
+        mutation_filename = self._write_mutation(swap_nodes)
+
+        # Build the test with the mutated file.
+        build_success = self._build_mutation(mutation_filename)
+
+        # Write out the diff before deleting the mutated file.
+        self._write_diff(mutation_filename)
+        os.system('rm {}'.format(mutation_filename))
+
+
+        if not build_success:
+            self.build_failed += 1
+            logging.error('Run {}: {} {} - build failed'.format(
+                self._iteration,
+                swap_nodes[0].coord,
+                mutation_str))
+        else:
+            # TODO: Build the exe path correctly
+            # TODO: Timeout - mutation could lead to infinite loop.
+            # TODO: Check for crashes
+            rc = _run_process('./' + self._test_exe)
+            if rc == 0:
+                self.missed += 1
+                result_str = 'missed'
+                log_fn = logging.error
+            else:
+                self.caught += 1
+                result_str = 'caught'
+                log_fn = logging.info
+
+            log_fn('Run {}: {} {}, test output {} - {}'.format(
+                self._iteration,
+                swap_nodes[0].coord,
+                mutation_str,
+                rc,
+                result_str))
 
         self._iteration += 1
