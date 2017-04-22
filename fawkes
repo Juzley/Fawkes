@@ -4,6 +4,7 @@ import os
 import sys
 import logging
 import datetime
+import argparse
 from subprocess import call
 from mutate import Mutator
 
@@ -27,10 +28,24 @@ class cd:
 
 if __name__ == '__main__':
     # TODO: Move this stuff to cmdline args
-    _BUILD_CMD = 'gcc -o mutate_test example.c test.c'
-    _CLEAN_CMD = 'rm -f mutate_test *.o'
-    _MUTATE_SRC = 'example.c' 
-    _TEST_EXE = 'mutate_test'
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-b', '--build_cmd',
+                        required=True,
+                        help='The command to use to build the test',
+                        dest='build_cmd')
+    parser.add_argument('-c', '--clean_cmd',
+                        required=False,
+                        help='The command to use to clean the test',
+                        dest='clean_cmd')
+    parser.add_argument('-s', '--src_file',
+                        required=True,
+                        help='The source file to mutate',
+                        dest='src_file')
+    parser.add_argument('-t', '--test_exe',
+                        required=True,
+                        help='The test executable to run',
+                        dest='test_exe')
+    args = parser.parse_args()
 
     # Set up logging
     logging.basicConfig(level=logging.INFO)
@@ -38,7 +53,7 @@ if __name__ == '__main__':
     # Create a directory for this run's logs, first creating the top
     # level log directory if it doesn't exist
     ts = datetime.datetime.now().strftime('%Y-%m-%d-%H%M%S')
-    run_log_dir = _LOG_DIR + '/' + _TEST_EXE + '-' + ts
+    run_log_dir = _LOG_DIR + '/' + args.test_exe + '-' + ts
     try:
         if not os.path.exists(_LOG_DIR):
             os.mkdir(_LOG_DIR)
@@ -69,9 +84,11 @@ if __name__ == '__main__':
             logging.error('Failed to build inject DLL')
             sys.exit(1)
 
-    mut = Mutator(_BUILD_CMD, _TEST_EXE, _MUTATE_SRC, inject_dll, run_log_dir)
+    mut = Mutator(args.build_cmd, args.test_exe, args.src_file, inject_dll,
+                  run_log_dir)
     mut()
 
-    # Clean up
-    os.system(_CLEAN_CMD)
+    # Clean up, if a clean command was specified
+    if args.clean_cmd is not None:
+        os.system(args.clean_cmd)
     
