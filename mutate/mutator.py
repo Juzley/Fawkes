@@ -3,6 +3,7 @@ import copy
 import os
 import tempfile
 import logging
+import copy
 
 from pycparser import c_generator
 from pycparser.c_ast import Break
@@ -12,9 +13,49 @@ _ENV_ORIG_SRC = 'MUTATE_ORIG_SRC'
 _ENV_MODIFIED_SRC = 'MUTATE_MODIFIED_SRC'
 
 
-def node_to_str (node):
+def _node_to_str(node):
+    '''Produce a string representation of an AST node.'''
     gen = c_generator.CGenerator()
     return gen.visit(node)
+
+
+def _find_nodes(node, nodetype):
+    '''Find nodes of a given type in a given subtree.'''
+    nodes = []
+
+    if isinstance(node, nodetype):
+        nodes.append(node)
+    
+    for _, c in node.children():
+        nodes.extend(_find_nodes(c, nodetype))
+
+    return nodes
+
+
+def _get_op_swaps(op, swaps):
+    '''Find the set of mutations to perform on a given op.'''
+    ops = set()
+    for s in swaps:
+        if op in s:
+            ops |= s - set(op)
+
+    return ops
+
+
+class MutationGenerator(c_generator.CGenerator):
+    def __init__(self, swap_nodes=None):
+        self.swap_nodes = swap_nodes
+        super().__init__()
+
+    def visit(self, node):
+        if node is self.swap_nodes[0]:
+            if self.swap_nodes[1] is not None:
+                return super().visit(self.swap_nodes[1])
+            else:
+                return ''
+        else:
+            return super().visit(node)
+
 
 class Mutator:
     def __init__(self, build_cmd, test_exe, mutate_file, inject_path):
@@ -51,76 +92,51 @@ class Mutator:
         pass
 
     def _visit_Case(self, node, parent):
-        # Find if there is a break, and remove it. Note that
-        # in the case where there are multiple breaks, we will
-        # remove them all.
-        old_stmts = node.stmts
-        node.stmts = [s for s in node.stmts if not isinstance(s, Break)]
-
-        self._test(node, 'remove breaks from "case {}"'.format(
-            node_to_str(node.expr)))
-        node.stmts = old_stmts
+        # Find any breaks, and remove them.
+        for b in _find_nodes(node, Break):
+            self._test((b, None))
 
     def _visit_UnaryOp(self, node, parent):
         test = False
 
-        old_node_str = node_to_str(node)
-        old_op = node.op
-
-        if node.op == 'p++':
-            node.op = 'p--'
-            test = True
-        elif node.op == 'p--':
-            node.op = 'p++'
-            test = True
-
-        if test:
-            self._test(node, '"{}" -> "{}"'.format(old_node_str,
-                                                   node_to_str(node)))
-        node.op = old_op
+        if node.op == '!':
+            self._test((node, node.expr))
+        else:
+            ops = _get_op_swaps(node.op,
+                                [{'p++', 'p--', '++', '--'}])
+            new_node = copy.copy(node)
+            for op in ops:
+                new_node.op = op
+                self._test((node, new_node))
 
     def _visit_BinaryOp(self, node, parent):
-        old_node_str = node_to_str(node)
-        old_op = node.op
+        new_node = copy.copy(node)
 
-        # Find the set of mutations to perform on this op. We define
-        # groups of operators that get swapped, and try each of the
-        # operators in that group if the op we are looking at is in
-        # the group.
-        ops = set()
-        op_swaps = [{'+', '-'},
-                    {'<', '>', '<=', '>='},
-                    {'<<', '>>'},
-                    {'!=', '=='},
-                    {'&', '&&'},
-                    {'&', '|'},
-                    {'&&', '||'},
-                    {'<<', '>>'},
-                    {'|=', '&='}]
-
-        for swap in op_swaps:
-            if node.op in swap:
-                ops |= swap - set(node.op)
-
+        ops = _get_op_swaps(node.op,
+                            [{'+', '-'},
+                             {'<', '>', '<=', '>='},
+                             {'<<', '>>'},
+                             {'!=', '=='},
+                             {'&', '&&'},
+                             {'&', '|'},
+                             {'&&', '||'},
+                             {'<<', '>>'},
+                             {'|=', '&='}])
         for op in ops:
-            node.op = op
-            self._test(node, '"{}" -> "{}"'.format(old_node_str,
-                                                   node_to_str(node)))
+            new_node.op = op
+            self._test((node, new_node))
 
-        node.op = old_op
-
-    def _test(self, node, mutation_str):
+    def _test(self, swap_nodes, mutation_str=''):
         # Write the modified AST out to a file
         ext = os.path.splitext(self._orig_filename)[1]
-        
         with tempfile.NamedTemporaryFile(
                 mode='w', suffix=ext, delete=False) as f:
-            gen = c_generator.CGenerator()
+            gen = MutationGenerator(swap_nodes)
             f.write(gen.visit(self._ast))
             mutated_filename = f.name
             
         # TODO: Use subprocess rather than this
-        # TODO: Timeout - mutation could lead to infinite loop
+        # TODO: Check for build failures
         # Build the test
         os.system('LD_PRELOAD={} {}="{}" {}="{}" {}'.format(
             self._inject_path,
@@ -132,6 +148,8 @@ class Mutator:
         os.system('rm {}'.format(mutated_filename))
 
         # Run the test
+        # TODO: Timeout - mutation could lead to infinite loop
+        # TODO: Check for crashes.
         ret = os.system('./' + self._test_exe)
         if ret == 0:
             self.missed += 1
@@ -142,9 +160,17 @@ class Mutator:
             result_str = 'caught'
             log_fn = logging.info
 
+        if mutation_str == '':
+            if swap_nodes[1] is None:
+                mutation_str = 'Remove {}'.format(_node_to_str(swap_nodes[0]))
+            else:
+                mutation_str = '"{}" -> "{}"'.format(
+                    _node_to_str(swap_nodes[0]),
+                    _node_to_str(swap_nodes[1]))
+
         log_fn('Run {}: {} {}, test output {} - {}'.format(
             self._iteration,
-            node.coord,
+            swap_nodes[0].coord,
             mutation_str,
             ret,
             result_str)) 
