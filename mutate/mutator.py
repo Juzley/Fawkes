@@ -100,7 +100,7 @@ class Mutator:
         self._build_cmd = build_cmd
         self._test_exe = test_exe
         self._orig_filename = mutate_file
-        self._ast = pycparser.parse_file(self._orig_filename)
+        self._ast = pycparser.parse_file(self._orig_filename, use_cpp=True)
         self._inject_path = inject_path
         self._iteration = 0
         self._log_dir = log_dir
@@ -122,15 +122,16 @@ class Mutator:
             self._visit(self._ast, None)
 
     def _visit(self, node, parent):
+        # Skip nodes that aren't in the original file (i.e. are in headers)
+        if node.coord is not None and node.coord.file != self._orig_filename:
+            return
+
         method = getattr(self, 
                          '_visit_' + node.__class__.__name__,
                          self._generic_visit)
         method(node, parent)
 
-        # Visit the children. Note that this provides individual node visit
-        # functions with no control over whether the children are visited or
-        # not, this is assumed to be OK for now but could move this into
-        # each node visit function if required.
+        # Visit the children.
         for _, c in node.children():
             self._visit(c, node)
 
