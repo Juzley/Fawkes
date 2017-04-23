@@ -27,7 +27,6 @@ class cd:
 
 
 if __name__ == '__main__':
-    # TODO: Move this stuff to cmdline args
     parser = argparse.ArgumentParser()
     parser.add_argument('-b', '--build_cmd',
                         required=True,
@@ -45,6 +44,12 @@ if __name__ == '__main__':
                         required=True,
                         help='The test executable to run',
                         dest='test_exe')
+    parser.add_argument('-e', '--exclude_pattern',
+                        action='append',
+                        required=False,
+                        help='Functions matching this python regex will be' +
+                            'ignored',
+                        dest='exclude_patterns')
     args = parser.parse_args()
 
     # Set up logging
@@ -85,7 +90,7 @@ if __name__ == '__main__':
             sys.exit(1)
 
     mut = Mutator(args.build_cmd, args.test_exe, args.src_file, inject_dll,
-                  run_log_dir)
+                  run_log_dir, args.exclude_patterns)
     mut()
 
     # Clean up, if a clean command was specified

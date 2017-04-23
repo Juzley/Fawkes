@@ -1,4 +1,5 @@
 import pycparser
+import re
 import copy
 import os
 import tempfile
@@ -9,7 +10,7 @@ import shlex
 import time
 from threading import Timer
 from pycparser import c_generator
-from pycparser.c_ast import Break
+from pycparser.c_ast import Break, FuncDef
 
 
 _ENV_ORIG_SRC = 'MUTATE_ORIG_SRC'
@@ -96,7 +97,8 @@ class Mutator:
     _MIN_RUN_TIME = 5
     _TIMEOUT_MULTIPLIER = 4
 
-    def __init__(self, build_cmd, test_exe, mutate_file, inject_path, log_dir):
+    def __init__(self, build_cmd, test_exe, mutate_file, inject_path, log_dir,
+                 exclude_patterns=None):
         self._build_cmd = build_cmd
         self._test_exe = test_exe
         self._orig_filename = mutate_file
@@ -110,8 +112,14 @@ class Mutator:
         self.timed_out = 0
         self.caught = 0
         self.missed = 0
+
         self._gen_orig_filename = '{}/{}.orig'.format(self._log_dir,
                                                       self._orig_filename)
+
+        if exclude_patterns is None:
+            self._exclude_patterns = []
+        else:
+            self._exclude_patterns = [re.compile(p) for p in exclude_patterns]
 
     @property
     def runs (self):
@@ -129,32 +137,23 @@ class Mutator:
         method = getattr(self, 
                          '_visit_' + node.__class__.__name__,
                          self._generic_visit)
-        method(node, parent)
+        descend = method(node, parent)
 
-        # Visit the children.
-        for _, c in node.children():
-            self._visit(c, node)
+        # Visit the children, unless the visit callback for this node
+        # indicated we should stop.
+        if descend:
+            for _, c in node.children():
+                self._visit(c, node)
 
     def _generic_visit(self, node, parent):
-        pass
+        return True
 
     def _visit_Case(self, node, parent):
         # Find any breaks, and remove them.
         for b in _find_nodes(node, Break):
             self._test((b, None))
 
-    def _visit_UnaryOp(self, node, parent):
-        test = False
-
-        if node.op == '!':
-            self._test((node, node.expr))
-        else:
-            ops = _get_op_swaps(node.op,
-                                [{'p++', 'p--', '++', '--'}])
-            new_node = copy.copy(node)
-            for op in ops:
-                new_node.op = op
-                self._test((node, new_node))
+        return True
 
     def _visit_BinaryOp(self, node, parent):
         new_node = copy.copy(node)
@@ -172,6 +171,30 @@ class Mutator:
         for op in ops:
             new_node.op = op
             self._test((node, new_node))
+
+        return True
+
+    def _visit_FuncDef(self, node, parent):
+        # Skip all of this function if its name matches one of the exclusion
+        # patterns.
+        for p in self._exclude_patterns:
+            if p.search(node.decl.name):
+                return False
+
+        return True
+
+    def _visit_UnaryOp(self, node, parent):
+        if node.op == '!':
+            self._test((node, node.expr))
+        else:
+            ops = _get_op_swaps(node.op,
+                                [{'p++', 'p--', '++', '--'}])
+            new_node = copy.copy(node)
+            for op in ops:
+                new_node.op = op
+                self._test((node, new_node))
+
+        return True
 
     def _iter_log_dirname(self):
         '''Return the log directory name for the current iteration.'''
