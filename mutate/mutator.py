@@ -80,16 +80,16 @@ def _run_process(cmd, env_vars=None, timeout_sec=0, log_filename=None):
 class MutationGenerator(c_generator.CGenerator):
     def __init__(self, swap_nodes=None):
         self.swap_nodes = swap_nodes
-        super().__init__()
+        super(MutationGenerator, self).__init__()
 
     def visit(self, node):
         if node is self.swap_nodes[0]:
             if self.swap_nodes[1] is not None:
-                return super().visit(self.swap_nodes[1])
+                return super(MutationGenerator, self).visit(self.swap_nodes[1])
             else:
                 return ''
         else:
-            return super().visit(node)
+            return super(MutationGenerator, self).visit(node)
 
 
 class Mutator:
