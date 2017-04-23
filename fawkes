@@ -1,11 +1,12 @@
 #!/usr/bin/env python
+'''Fawkes: Mutation Testing Tool for C.'''
 
 import os
 import sys
 import logging
 import datetime
 import argparse
-from subprocess import call
+# TODO: Need to add to the pythonpath if we're not running in the fawkes dir
 from mutate import Mutator
 
 _LOG_DIR = 'fawkes-logs'
@@ -15,18 +16,18 @@ _INJECT_DLL = 'inject.so'
 
 class cd:
     """Context manager for changing the current working directory"""
-    def __init__(self, newPath):
-        self.newPath = os.path.expanduser(newPath)
+    def __init__(self, newpath):
+        self.newpath = os.path.expanduser(newPath)
 
     def __enter__(self):
-        self.savedPath = os.getcwd()
-        os.chdir(self.newPath)
+        self.savedpath = os.getcwd()
+        os.chdir(self.newpath)
 
     def __exit__(self, etype, value, traceback):
-        os.chdir(self.savedPath)
+        os.chdir(self.savedpath)
 
 
-if __name__ == '__main__':
+def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('-b', '--build_cmd',
                         required=True,
@@ -48,9 +49,13 @@ if __name__ == '__main__':
                         action='append',
                         required=False,
                         help='Functions matching this python regex will be' +
-                            'ignored',
+                        'ignored',
                         dest='exclude_patterns')
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    args = parse_args()
 
     # Set up logging
     logging.basicConfig(level=logging.INFO)
@@ -96,4 +101,3 @@ if __name__ == '__main__':
     # Clean up, if a clean command was specified
     if args.clean_cmd is not None:
         os.system(args.clean_cmd)
-    

@@ -1,16 +1,14 @@
-import pycparser
 import re
 import copy
 import os
 import tempfile
 import logging
-import copy
 import subprocess
 import shlex
 import time
 from threading import Timer
-from pycparser import c_generator
-from pycparser.c_ast import Break, FuncDef
+from pycparser import parse_file, c_generator
+from pycparser.c_ast import Break
 
 
 _ENV_ORIG_SRC = 'MUTATE_ORIG_SRC'
@@ -102,7 +100,7 @@ class Mutator:
         self._build_cmd = build_cmd
         self._test_exe = test_exe
         self._orig_filename = mutate_file
-        self._ast = pycparser.parse_file(self._orig_filename, use_cpp=True)
+        self._ast = parse_file(self._orig_filename, use_cpp=True)
         self._inject_path = inject_path
         self._iteration = 0
         self._log_dir = log_dir
@@ -122,7 +120,7 @@ class Mutator:
             self._exclude_patterns = [re.compile(p) for p in exclude_patterns]
 
     @property
-    def runs (self):
+    def runs(self):
         return self.caught + self.missed + self.build_failed + self.crashed
 
     def __call__(self):
@@ -134,7 +132,7 @@ class Mutator:
         if node.coord is not None and node.coord.file != self._orig_filename:
             return
 
-        method = getattr(self, 
+        method = getattr(self,
                          '_visit_' + node.__class__.__name__,
                          self._generic_visit)
         descend = method(node, parent)
@@ -203,7 +201,7 @@ class Mutator:
     def _write_mutation(self, swap_nodes):
         ext = os.path.splitext(self._orig_filename)[1]
         with tempfile.NamedTemporaryFile(
-                mode='w', suffix=ext, delete=False) as f:
+            mode='w', suffix=ext, delete=False) as f:
             gen = MutationGenerator(swap_nodes)
             f.write(gen.visit(self._ast))
             return f.name
@@ -324,4 +322,3 @@ class Mutator:
 
 
         return rc == 0
-
