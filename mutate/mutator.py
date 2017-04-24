@@ -47,7 +47,7 @@ def _get_op_swaps(op, swaps):
 def _run_process(cmd, env_vars=None, timeout_sec=0, log_filename=None):
     def timeout(p):
         p.kill()
-        raise TimeoutException()
+        raise TimeoutError()
 
     env = os.environ.copy()
     if env_vars is not None:
@@ -111,8 +111,8 @@ class Mutator:
         self.caught = 0
         self.missed = 0
 
-        self._gen_orig_filename = '{}/{}.orig'.format(self._log_dir,
-                                                      self._orig_filename)
+        self._gen_orig_filename = '{}/{}.orig'.format(
+            self._log_dir, os.path.basename(self._orig_filename))
 
         if exclude_patterns is None:
             self._exclude_patterns = []
@@ -196,7 +196,7 @@ class Mutator:
 
     def _iter_log_dirname(self):
         '''Return the log directory name for the current iteration.'''
-        return self._log_dir + '/{}'.format(self._iteration)
+        return self._log_dir + '/run{}'.format(self._iteration)
 
     def _write_mutation(self, swap_nodes):
         ext = os.path.splitext(self._orig_filename)[1]
@@ -224,18 +224,18 @@ class Mutator:
             self._gen_orig_filename,
             mutation_filename,
             self._iter_log_dirname(),
-            self._orig_filename))
+            os.path.basename(self._orig_filename)))
 
     def _run_mutation(self, mutation_str, coord):
         # TODO: Build the exe path correctly
         # TODO: Check for crashes
         try:
             run_log = '{}/{}.log'.format(self._iter_log_dirname(),
-                                         self._test_exe)
+                                         os.path.basename(self._test_exe))
             rc = _run_process(cmd='./' + self._test_exe,
                               log_filename=run_log,
                               timeout_sec=self._run_timeout)
-        except TimeoutException:
+        except TimeoutError:
             self.timed_out += 1
             result_str = 'timed out'
             log_fn = logging.error
@@ -309,9 +309,9 @@ class Mutator:
             start = time.time()
 
             # TODO: Build the exe path correctly
-            run_log = self._log_dir + '/' + self._test_exe + '.log.orig'
-            rc = _run_process(cmd='./' + self._test_exe,
-                              log_filename=run_log)
+            run_log = '{}/{}.log.orig'.format(
+                    self._log_dir, os.path.basename(self._test_exe))
+            rc = _run_process(cmd='./' + self._test_exe, log_filename=run_log)
 
             end = time.time()
 

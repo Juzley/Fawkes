@@ -6,7 +6,6 @@ import sys
 import logging
 import datetime
 import argparse
-# TODO: Need to add to the pythonpath if we're not running in the fawkes dir
 from mutate import Mutator
 
 _LOG_DIR = 'fawkes-logs'
@@ -63,7 +62,7 @@ if __name__ == '__main__':
     # Create a directory for this run's logs, first creating the top
     # level log directory if it doesn't exist
     ts = datetime.datetime.now().strftime('%Y-%m-%d-%H%M%S')
-    run_log_dir = _LOG_DIR + '/' + args.test_exe + '-' + ts
+    run_log_dir = _LOG_DIR + '/' + os.path.basename(args.test_exe) + '-' + ts
     try:
         if not os.path.exists(_LOG_DIR):
             os.mkdir(_LOG_DIR)
